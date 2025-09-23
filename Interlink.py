@@ -1766,18 +1766,6 @@ async def deploy(ctx):
     
     await ctx.send(embed=embed, view=view)
 
-@bot.command(name='create', help='(Chủ bot) Tạo nhiều kênh trong nhiều server.')
-@commands.is_owner()
-async def create(ctx):
-    """Mở giao diện tạo kênh hàng loạt."""
-    view = CreateChannelView(ctx.author, bot.guilds)
-    embed = discord.Embed(
-        title="🛠️ Bảng Điều Khiển Tạo Kênh",
-        description="Sử dụng các công cụ bên dưới để tạo kênh hàng loạt.",
-        color=discord.Color.blue()
-    )
-    await ctx.send(embed=embed, view=view)
-
 @bot.command(name='getid', help='(Chủ bot) Lấy ID của các kênh theo tên.')
 @commands.is_owner()
 async def getid(ctx):
@@ -2808,6 +2796,7 @@ if __name__ == '__main__':
         print("🔄 Keeping web server alive...")
         while True:
             time.sleep(60)
+
 
 
 
