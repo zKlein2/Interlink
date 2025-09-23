@@ -1630,7 +1630,7 @@ async def deploy(ctx):
 @commands.is_owner()
 async def create(ctx):
     """Mở giao diện tạo kênh hàng loạt."""
-    view = CreateView(interaction)
+    view = CreateView(ctx)
     embed = discord.Embed(
         title="🛠️ Bảng Điều Khiển Tạo Kênh",
         description="Sử dụng các công cụ bên dưới để tạo kênh hàng loạt.",
@@ -2668,6 +2668,7 @@ if __name__ == '__main__':
         print("🔄 Keeping web server alive...")
         while True:
             time.sleep(60)
+
 
 
 
