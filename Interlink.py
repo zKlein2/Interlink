@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 import time
 from PIL import Image, ImageDraw
 import io
+import aiohttp
 
 # Try to import psycopg2, fallback to JSONBin if not available
 try:
@@ -496,24 +497,48 @@ class RosterPages(discord.ui.View):
         if not page_agents:
             return discord.Embed(title="Lỗi", description="Không có dữ liệu cho trang này."), None
 
-        # --- Logic tạo ảnh ghép cho trang hiện tại ---
+        # --- Logic tạo ảnh ghép cho trang hiện tại (ĐÃ SỬA) ---
         avatar_size = 128
         padding = 10
         
         canvas = Image.new('RGBA', ((avatar_size + padding) * len(page_agents) + padding, avatar_size + padding * 2), (44, 47, 51, 255))
         current_x = padding
         
-        for agent in page_agents:
-            if agent.get('avatar_hash'):
-                avatar_url = f"https://cdn.discordapp.com/avatars/{agent['id']}/{agent['avatar_hash']}.png?size=128"
-                try:
-                    response = requests.get(avatar_url, stream=True)
-                    response.raise_for_status()
-                    avatar_img = Image.open(io.BytesIO(response.content)).convert("RGBA")
-                    canvas.paste(avatar_img, (current_x, padding))
-                except Exception as e:
-                    print(f"Could not load avatar for {agent['id']}: {e}")
-            current_x += avatar_size + padding
+        # Sử dụng aiohttp để tải ảnh bất đồng bộ
+        async with aiohttp.ClientSession() as session:
+            for agent in page_agents:
+                if agent.get('avatar_hash'):
+                    avatar_url = f"https://cdn.discordapp.com/avatars/{agent['id']}/{agent['avatar_hash']}.png?size=128"
+                    try:
+                        async with session.get(avatar_url) as response:
+                            if response.status == 200:
+                                avatar_data = await response.read()
+                                avatar_img = Image.open(io.BytesIO(avatar_data)).convert("RGBA")
+                                canvas.paste(avatar_img, (current_x, padding))
+                            else:
+                                print(f"Failed to load avatar for {agent['id']}: HTTP {response.status}")
+                    except Exception as e:
+                        print(f"Could not load avatar for {agent['id']}: {e}")
+                current_x += avatar_size + padding
+        
+        buffer = io.BytesIO()
+        canvas.save(buffer, 'PNG')
+        buffer.seek(0)
+        discord_file = discord.File(buffer, filename=f"roster_page_{page_num}.png")
+        # --- Kết thúc logic tạo ảnh ---
+
+        description_list = [f"👤 **{agent['username']}** `(ID: {agent['id']})`" for agent in page_agents]
+        description_text = "\n".join(description_list)
+
+        embed = discord.Embed(
+            title=f"AGENT ROSTER ({len(self.agents)} Active)",
+            description=description_text,
+            color=discord.Color.dark_grey()
+        )
+        embed.set_image(url=f"attachment://roster_page_{page_num}.png"g
+        embed.set_footer(text=f"Trang {self.current_page + 1}/{self.total_pages}")
+        
+        return embed, discord_file
         
         buffer = io.BytesIO()
         canvas.save(buffer, 'PNG')
@@ -547,15 +572,15 @@ class RosterPages(discord.ui.View):
 
     async def send_initial_message(self):
         """Gửi tin nhắn đầu tiên."""
-        embed, file = await self.create_page_embed(self.current_page)
+        embed, file = await self.create_page_embed(self.current_page) # Thêm await
         await self.update_buttons()
         self.message = await self.ctx.send(embed=embed, file=file, view=self)
-
+    
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏪")
     async def fast_backward(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Lùi nhanh 5 trang hoặc về trang đầu."""
         self.current_page = max(0, self.current_page - 5)
-        embed, file = await self.create_page_embed(self.current_page)
+        embed, file = await self.create_page_embed(self.current_page) # Thêm await
         await self.update_buttons()
         await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
@@ -564,7 +589,7 @@ class RosterPages(discord.ui.View):
         """Lùi chậm 1 trang."""
         if self.current_page > 0:
             self.current_page -= 1
-            embed, file = await self.create_page_embed(self.current_page)
+            embed, file = await self.create_page_embed(self.current_page) # Thêm await
             await self.update_buttons()
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
         else:
@@ -575,7 +600,7 @@ class RosterPages(discord.ui.View):
         """Tiến chậm 1 trang."""
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
-            embed, file = await self.create_page_embed(self.current_page)
+            embed, file = await self.create_page_embed(self.current_page) # Thêm await
             await self.update_buttons()
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
         else:
@@ -585,7 +610,7 @@ class RosterPages(discord.ui.View):
     async def fast_forward(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Tiến nhanh 5 trang hoặc đến trang cuối."""
         self.current_page = min(self.total_pages - 1, self.current_page + 5)
-        embed, file = await self.create_page_embed(self.current_page)
+        embed, file = await self.create_page_embed(self.current_page) # Thêm await
         await self.update_buttons()
         await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
@@ -2796,6 +2821,7 @@ if __name__ == '__main__':
         print("🔄 Keeping web server alive...")
         while True:
             time.sleep(60)
+
 
 
 
