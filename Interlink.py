@@ -535,7 +535,7 @@ class RosterPages(discord.ui.View):
             description=description_text,
             color=discord.Color.dark_grey()
         )
-        embed.set_image(url=f"attachment://roster_page_{page_num}.png"g
+        embed.set_image(url=f"attachment://roster_page_{page_num}.png")
         embed.set_footer(text=f"Trang {self.current_page + 1}/{self.total_pages}")
         
         return embed, discord_file
@@ -2821,6 +2821,7 @@ if __name__ == '__main__':
         print("🔄 Keeping web server alive...")
         while True:
             time.sleep(60)
+
 
 
 
