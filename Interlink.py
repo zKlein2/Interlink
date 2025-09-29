@@ -1712,22 +1712,60 @@ async def migrate_tokens(ctx, source: str = None, target: str = None):
 @bot.command(name='roster', help='(Owner only) Displays a paginated visual roster of all agents.')
 @commands.is_owner()
 async def roster(ctx):
-    """Displays a paginated visual roster of all authorized agents from JSONBin."""
-    await ctx.send("Accessing network archives...")
+    """Hiển thị danh sách điệp viên đã được ủy quyền một cách trực quan và có phân trang."""
+    await ctx.send("Đang truy cập kho lưu trữ mạng...")
 
     try:
-        agent_data = jsonbin_storage.read_data()
-        if not agent_data:
-            await ctx.send("❌ **Error:** No agent dossiers found in the network.")
+        full_data = jsonbin_storage.read_data()
+        if not full_data:
+            await ctx.send("❌ **Lỗi:** Không tìm thấy hồ sơ điệp viên nào trong mạng.")
             return
 
-        agents = [
-            {'id': uid, 'username': data.get('username', 'N/A'), 'avatar_hash': data.get('avatar_hash')}
-            for uid, data in agent_data.items() if isinstance(data, dict)
-        ]
+        # Tách danh sách thứ tự và dữ liệu điệp viên
+        roster_order = full_data.pop('_roster_order', None)
+        agent_data = full_data
+        
+        # --- Logic sắp xếp mới ---
+        agents = []
+        
+        # Tạo một set chứa ID của các điệp viên có dữ liệu để kiểm tra nhanh
+        valid_agent_ids = {uid for uid, data in agent_data.items() if isinstance(data, dict)}
+
+        if roster_order:
+            # 1. Thêm các điệp viên theo thứ tự đã lưu
+            ordered_ids = set()
+            for uid in roster_order:
+                if uid in valid_agent_ids:
+                    data = agent_data[uid]
+                    agents.append({
+                        'id': uid, 
+                        'username': data.get('username', 'N/A'), 
+                        'avatar_hash': data.get('avatar_hash')
+                    })
+                    ordered_ids.add(uid)
+            
+            # 2. Thêm các điệp viên mới (chưa có trong danh sách thứ tự) vào cuối
+            for uid in valid_agent_ids:
+                if uid not in ordered_ids:
+                    data = agent_data[uid]
+                    agents.append({
+                        'id': uid, 
+                        'username': data.get('username', 'N/A'), 
+                        'avatar_hash': data.get('avatar_hash')
+                    })
+        else:
+            # Nếu không có thứ tự, tạo danh sách theo mặc định
+            print("⚠️ Không tìm thấy `_roster_order`. Tạo danh sách mặc định.")
+            for uid, data in agent_data.items():
+                if isinstance(data, dict):
+                    agents.append({
+                        'id': uid, 
+                        'username': data.get('username', 'N/A'), 
+                        'avatar_hash': data.get('avatar_hash')
+                    })
 
         if not agents:
-            await ctx.send("❌ **Error:** No agent data found.")
+            await ctx.send("❌ **Lỗi:** Không tìm thấy dữ liệu điệp viên hợp lệ.")
             return
         
         # Khởi tạo và gửi trang đầu tiên
@@ -1735,8 +1773,74 @@ async def roster(ctx):
         await pagination_view.send_initial_message()
 
     except Exception as e:
-        await ctx.send(f"An unexpected error occurred: {e}")
-        print(f"Roster command error: {e}")
+        await ctx.send(f"Đã xảy ra lỗi không mong muốn: {e}")
+        print(f"Lỗi lệnh roster: {e}")
+
+@bot.command(name='roster_move', help='(Chủ bot) Thay đổi vị trí của một điệp viên trong danh sách roster.')
+@commands.is_owner()
+async def roster_move(ctx, user_to_move: discord.User, position: int):
+    """
+    Di chuyển một người dùng đến một vị trí cụ thể trong danh sách roster.
+    Vị trí bắt đầu từ 1.
+    Cách dùng: !roster_move @TênNgườiDùng 1
+    """
+    if position < 1:
+        return await ctx.send("❌ Vị trí phải là một số lớn hơn hoặc bằng 1.")
+
+    await ctx.send(f"⏳ Đang thực hiện thay đổi vị trí cho **{user_to_move.name}**...")
+
+    # 1. Đọc toàn bộ dữ liệu từ JSONBin
+    full_data = jsonbin_storage.read_data()
+    if not full_data:
+        return await ctx.send("❌ Không có dữ liệu nào trong storage để sắp xếp.")
+
+    # 2. Lấy danh sách thứ tự hoặc tạo mới nếu chưa có
+    roster_order = full_data.get('_roster_order', list(key for key in full_data.keys() if key != '_roster_order'))
+    
+    user_id_to_move = str(user_to_move.id)
+
+    # 3. Kiểm tra xem user có trong danh sách không
+    if user_id_to_move not in roster_order:
+        # Nếu chưa có, thêm vào cuối rồi mới di chuyển
+        roster_order.append(user_id_to_move)
+
+    # 4. Thực hiện di chuyển
+    try:
+        # Xóa ID khỏi vị trí hiện tại
+        roster_order.remove(user_id_to_move)
+        
+        # Chèn vào vị trí mới (chuyển đổi vị trí 1-based thành index 0-based)
+        new_index = position - 1
+        roster_order.insert(new_index, user_id_to_move)
+        
+    except ValueError:
+        # Lỗi này không nên xảy ra do đã kiểm tra ở trên, nhưng vẫn để phòng hờ
+        return await ctx.send(f"❌ Không tìm thấy điệp viên **{user_to_move.name}** trong danh sách thứ tự.")
+    
+    # 5. Cập nhật lại dữ liệu và ghi vào JSONBin
+    full_data['_roster_order'] = roster_order
+    
+    if jsonbin_storage.write_data(full_data):
+        embed = discord.Embed(
+            title="✅ Sắp Xếp Thành Công",
+            description=f"Đã di chuyển điệp viên **{user_to_move.name}** đến vị trí **#{position}** trong roster.",
+            color=discord.Color.green()
+        )
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send("❌ Đã xảy ra lỗi khi cố gắng lưu lại thứ tự mới vào JSONBin.")
+
+@roster_move.error
+async def roster_move_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ **Sai cú pháp!** Vui lòng nhập đầy đủ.\n**Ví dụ:** `!roster_move @TênUser 1`")
+    elif isinstance(error, commands.UserNotFound):
+        await ctx.send("❌ Không tìm thấy người dùng được chỉ định.")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("❌ Vị trí phải là một con số.")
+    else:
+        await ctx.send(f"Đã xảy ra lỗi không xác định: {error}")
+        print(f"Lỗi lệnh roster_move: {error}")
 
 @bot.command(name='remove', help='(Owner only) Removes an agent from all storage systems.')
 @commands.is_owner()
@@ -2821,6 +2925,7 @@ if __name__ == '__main__':
         print("🔄 Keeping web server alive...")
         while True:
             time.sleep(60)
+
 
 
 
